@@ -6,14 +6,16 @@ import { db } from '../config/db.js';
 
 const router = Router();
 
-const s3 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
+function getS3Client() {
+  return new S3Client({
+    region: 'auto',
+    endpoint: process.env.R2_ENDPOINT,
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+  });
+}
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -33,13 +35,19 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/:id/download', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT * FROM files WHERE id=$1 AND user_id=$2`,
+      `SELECT f.*, c.chunk_index 
+       FROM files f
+       LEFT JOIN chunk_manifest c ON c.file_id = f.id AND c.chunk_index = 0
+       WHERE f.id=$1 AND f.user_id=$2`,
       [req.params.id, req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'File not found' });
+
+    const s3 = getS3Client();
+    
     const command = new GetObjectCommand({
       Bucket: process.env.S3_BUCKET,
-      Key: rows[0].s3_key,
+      Key: `${rows[0].s3_key}.part0`,
     });
     const url = await getSignedUrl(s3, command, { expiresIn: 300 });
     res.json({ url });
